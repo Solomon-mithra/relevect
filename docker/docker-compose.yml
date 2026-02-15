@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: contextd-postgres
+    environment:
+      POSTGRES_USER: contextd
+      POSTGRES_PASSWORD: contextd
+      POSTGRES_DB: contextd
+    ports:
+      - "5433:5432"
+    volumes:
+      - contextd_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contextd -d contextd"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  contextd_pgdata:
