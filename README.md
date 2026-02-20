@@ -1,0 +1,1 @@
+# Relevect — Local Context Engine for AI Agents
