@@ -156,3 +156,6 @@ Desktop.ini
 .vscode/
 *.swp
 *.swo
+
+data
+pytest.ini
