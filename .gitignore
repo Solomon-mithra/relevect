@@ -159,3 +159,5 @@ Desktop.ini
 
 data
 pytest.ini
+.env
+node_modules

@@ -26,10 +26,12 @@ pydantic_core==2.41.5
 Pygments==2.19.2
 python-dotenv==1.2.1
 python-multipart==0.0.22
+pypdf==5.4.0
 PyYAML==6.0.3
 rich==14.3.2
 rich-toolkit==0.19.4
 rignore==0.7.6
+sentence-transformers==3.4.1
 sentry-sdk==2.52.0
 shellingham==1.5.4
 starlette==0.52.1

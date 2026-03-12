@@ -1,0 +1,17 @@
+[package]
+name = "relevect-desktop"
+version = "0.1.0"
+description = "Desktop shell for the Relevect local context engine"
+authors = ["Solomon Mithra"]
+edition = "2021"
+
+[lib]
+name = "relevect_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+

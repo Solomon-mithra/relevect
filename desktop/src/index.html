@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Relevect Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="masthead">
+        <div class="brand-block">
+          <p class="brand-kicker">Relevect</p>
+          <h1>Private context with product-grade clarity.</h1>
+          <p class="brand-copy">
+            Trust a folder. Scan for changes. Run indexing. Search with provenance. The engine stays
+            local, but the experience should feel calm enough for non-technical people.
+          </p>
+        </div>
+        <div class="masthead-meta">
+          <span id="engine-status" class="signal signal-muted">Engine unknown</span>
+          <span class="signal">On-device</span>
+          <span class="signal">Mac desktop</span>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Views">
+        <button class="tab-button is-active" data-tab="home">Home</button>
+        <button class="tab-button" data-tab="advanced">Advanced</button>
+      </nav>
+
+      <section id="tab-home" class="tab-panel is-active">
+        <section class="command-deck">
+          <article class="command-card command-card-primary">
+            <p class="section-kicker">Trust boundary</p>
+            <h2>Add a trusted folder</h2>
+            <p>
+              Relevect never guesses what to crawl. The product starts when you explicitly choose a
+              folder that should be searchable.
+            </p>
+            <div class="path-row">
+              <input id="folder-path" type="text" placeholder="/Users/you/Documents/PrivateDocs" />
+              <button id="register-folder">Add Folder</button>
+            </div>
+          </article>
+
+          <article class="command-card">
+            <p class="section-kicker">Pipeline</p>
+            <h2>Keep the index current</h2>
+            <p>Run the workflow in order. Scan discovers changes. Indexing processes anything new, changed, or stale.</p>
+            <div class="command-actions">
+              <button id="scan-folders">Scan for Changes</button>
+              <button id="run-indexing">Run Indexing</button>
+              <button id="refresh-all" class="secondary">Refresh</button>
+            </div>
+          </article>
+
+          <article class="command-card command-card-proof">
+            <p class="section-kicker">Trust</p>
+            <h2>Nothing leaves the machine unless you make it.</h2>
+            <p>
+              Local model, local metadata, local retrieval. The interface should make that obvious,
+              not assume users will read documentation.
+            </p>
+          </article>
+        </section>
+
+        <section class="workflow-strip">
+          <div class="workflow-step">
+            <span class="workflow-index">01</span>
+            <div>
+              <strong>Folders</strong>
+              <p>Choose what Relevect can see.</p>
+            </div>
+          </div>
+          <div class="workflow-step">
+            <span class="workflow-index">02</span>
+            <div>
+              <strong>Scan</strong>
+              <p>Discover new, changed, and deleted files.</p>
+            </div>
+          </div>
+          <div class="workflow-step">
+            <span class="workflow-index">03</span>
+            <div>
+              <strong>Index</strong>
+              <p>Parse, chunk, embed, and persist.</p>
+            </div>
+          </div>
+          <div class="workflow-step">
+            <span class="workflow-index">04</span>
+            <div>
+              <strong>Search</strong>
+              <p>Return grounded passages with source signals.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <aside class="sources-panel">
+            <div class="panel-header">
+              <div>
+                <p class="section-kicker">Sources</p>
+                <h2>Trusted folders</h2>
+              </div>
+              <button id="refresh-folders" class="secondary">Refresh</button>
+            </div>
+            <div id="folder-list" class="folder-list empty-state">
+              Add a trusted folder to begin.
+            </div>
+          </aside>
+
+          <section class="search-panel">
+            <div class="search-hero">
+              <div>
+                <p class="section-kicker">Search</p>
+                <h2>Ask your private corpus something specific.</h2>
+                <p id="search-summary" class="search-summary">
+                  Results will surface the strongest passages from indexed files, with provenance.
+                </p>
+              </div>
+              <span class="signal signal-quiet">Hybrid ranking</span>
+            </div>
+
+            <div class="search-bar">
+              <input id="search-query" type="text" placeholder="hard hearted" />
+              <button id="run-search">Search</button>
+            </div>
+
+            <div id="search-results" class="search-results empty-state">
+              Search results will appear here with source snippets and scores.
+            </div>
+          </section>
+
+          <aside class="insight-panel">
+            <section class="info-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Selection</p>
+                  <h2>Inspector</h2>
+                </div>
+                <button id="refresh-files" class="secondary">Refresh Files</button>
+              </div>
+              <div id="inspector" class="inspector empty-state">
+                Select a folder or file to inspect what Relevect knows about it.
+              </div>
+            </section>
+
+            <section class="info-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Health</p>
+                  <h2>Index state</h2>
+                </div>
+                <button id="refresh-status" class="secondary">Refresh Status</button>
+              </div>
+              <div id="status-cards" class="status-cards"></div>
+            </section>
+
+            <section class="info-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Library</p>
+                  <h2>Files</h2>
+                  <p id="library-subtitle" class="panel-copy">Files inside the selected trusted folder.</p>
+                </div>
+              </div>
+              <div id="file-list" class="file-list empty-state">
+                Scan a folder to see discovered and indexed files.
+              </div>
+            </section>
+
+            <section class="info-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Activity</p>
+                  <h2>Recent jobs</h2>
+                </div>
+              </div>
+              <div id="jobs-list" class="jobs-list empty-state">
+                No jobs yet.
+              </div>
+            </section>
+          </aside>
+        </section>
+      </section>
+
+      <section id="tab-advanced" class="tab-panel">
+        <section class="advanced-shell">
+          <div class="advanced-intro">
+            <p class="section-kicker">Advanced mode</p>
+            <h2>Raw engine state for debugging and development.</h2>
+            <p>Home stays product-focused. This tab keeps the JSON and low-level internals out of the main experience.</p>
+          </div>
+          <section class="advanced-grid">
+            <div class="advanced-card">
+              <div class="panel-header">
+                <h2>Folders JSON</h2>
+              </div>
+              <pre id="folders-output" class="output"></pre>
+            </div>
+            <div class="advanced-card">
+              <div class="panel-header">
+                <h2>Files JSON</h2>
+              </div>
+              <pre id="files-output" class="output"></pre>
+            </div>
+            <div class="advanced-card">
+              <div class="panel-header">
+                <h2>Jobs JSON</h2>
+              </div>
+              <pre id="jobs-output" class="output"></pre>
+            </div>
+            <div class="advanced-card">
+              <div class="panel-header">
+                <h2>Search JSON</h2>
+              </div>
+              <pre id="search-output" class="output search-output"></pre>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+  </html>

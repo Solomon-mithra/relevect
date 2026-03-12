@@ -42,10 +42,13 @@ CREATE TABLE IF NOT EXISTS chunks (
   heading TEXT,
   start_offset INTEGER,
   end_offset INTEGER,
+  embedding TEXT,
   embedding_model TEXT,
   created_at TEXT NOT NULL,
   FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
 
 CREATE TABLE IF NOT EXISTS index_jobs (
   id TEXT PRIMARY KEY,
