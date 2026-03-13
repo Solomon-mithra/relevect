@@ -1,107 +1,125 @@
-# Relevect - Local Context Engine for AI Agents
+# Relevect - Local Context Engine for Claude
 
-Week 4 baseline implemented:
+<div align="center">
+  <img src="./logo-transparent.svg" alt="Relevect Logo" width="450" />
+  <h3 style="color:grey;margin-top: -20px;">Relevect helps Claude search your local files.</h3>
+</div>
 
-- SQLite metadata schema (`folders`, `files`, `index_jobs`, `chunks`)
-- FastAPI service startup DB initialization
-- Folder registration and listing
-- Recursive file discovery for `.pdf`, `.md`, `.txt`
-- Scan endpoint with deleted-file marking
-- Manual file indexing endpoint
-- Parser pipeline for `.txt`, `.md`, and `.pdf`
-- Chunk creation with snippets and heading/page metadata
-- Local sentence-transformers embeddings for chunks and queries
-- Hybrid retrieval endpoint over indexed chunks with normalized semantic and lexical scores
-- Pending-file detection after scans
-- Bulk indexing pipeline for discovered/changed files
-- Index status endpoint with file counters + recent jobs
-- Search-only MCP server for Claude Desktop using the official Python MCP SDK
+<br>
 
-## Run
+## Fastest Start
+
+### Option 1: one command with Docker
 
 ```bash
-uvicorn api.main:app --reload
+docker compose up --build
 ```
 
-Default DB path: `./data/relevect.db`
+Then open:
 
-Override with:
+- API: `http://127.0.0.1:8000`
+- UI: `http://127.0.0.1:1420`
+
+### Option 2: run it locally in 3 steps
+
+#### 1. Install Python dependencies
 
 ```bash
-export RELEVECT_DB_PATH=/absolute/path/relevect.db
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Current API
-
-- `GET /health`
-- `POST /folders`
-- `GET /folders`
-- `DELETE /folders/{folder_id}`
-- `POST /index/scan`
-- `POST /index/file`
-- `POST /index/files`
-- `POST /index/run`
-- `POST /search`
-- `GET /index/status`
-- `GET /files`
-- `DELETE /files/{file_id}`
-- `POST /admin/reset`
-
-## MCP Server
-
-Relevect also includes a separate MCP server in [mcp_server/README.md](/Users/solomonmithra/Documents/Work/Relevect/mcp_server/README.md).
-
-Current MCP surface:
-
-- `search`
-
-It is implemented with the official Python MCP SDK and is intended for Claude Desktop connectors. It reuses the existing indexed Relevect corpus and does not expose scan/index management over MCP.
-
-Run it directly:
+#### 2. Start FastAPI
 
 ```bash
-.venv/bin/python mcp_server/server.py
+.venv/bin/uvicorn api.main:app --reload
 ```
 
-Recommended Claude Desktop config:
+#### 3. Start the UI
+
+```bash
+cd web-app
+npm install
+npm run dev
+```
+
+Then open `http://127.0.0.1:1420`.
+
+## How To Use
+
+1. Start the API and UI.
+2. Add a local folder in the UI.
+3. Scan and index files.
+4. Search your files.
+
+## Connect To Claude Desktop
+
+Relevect's MCP server is configured manually today.
+
+Edit:
+
+```text
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+Add or merge:
 
 ```json
 {
-  "preferences": {
-    "coworkScheduledTasksEnabled": true,
-    "sidebarMode": "chat",
-    "coworkWebSearchEnabled": true,
-    "ccdScheduledTasksEnabled": true
-  },
   "mcpServers": {
     "relevect": {
-      "command": "/Users/solomonmithra/Documents/Work/Relevect/.venv/bin/python",
-      "args": [
-        "/Users/solomonmithra/Documents/Work/Relevect/mcp_server/server.py"
-      ],
-      "cwd": "/Users/solomonmithra/Documents/Work/Relevect"
+      "command": "/ABSOLUTE/PATH/TO/RELEVECT/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/RELEVECT/mcp_server/server.py"],
+      "cwd": "/ABSOLUTE/PATH/TO/RELEVECT"
     }
   }
 }
 ```
 
-Notes:
+Then:
 
-- The MCP server pins `RELEVECT_DB_PATH` to the repo-local database path inside the MCP process so Claude Desktop startup is not dependent on shell cwd behavior.
-- Claude Desktop should be fully quit with `Cmd+Q` after config changes.
+1. Fully quit Claude Desktop with `Cmd+Q`.
+2. Reopen Claude Desktop.
+3. Check Claude's connectors/tools menu for `relevect`.
 
-## Learning notes
+Note:
 
-- Metadata is intentionally in SQLite first, so behavior is easy to inspect.
-- `discover_files()` in `core/discovery.py` is simple and deterministic on purpose.
-- `parse_document()` in `core/parser.py` converts file types into a common internal shape.
-- `chunk_document()` in `core/chunking.py` turns parsed sections into stable chunk records.
-- `core/embeddings.py` now uses a local `sentence-transformers` model (`all-MiniLM-L6-v2` by default).
-- `core/retrieval.py` adds BM25-style lexical ranking, exact-phrase boosts, and score normalization so one signal does not dominate purely because of numeric scale.
-- `POST /index/run` is the first real pipeline endpoint: it processes all discovered, changed, failed, or model-stale files without manual per-file calls.
-- `index_jobs` gives a basic operational trail for scans before we add a queue/watcher.
-- The MCP server was intentionally separated from the FastAPI app so Claude/Desktop integration does not distort the core engine architecture.
+- Relevect's MCP server currently exposes search.
+- Your local Relevect index must already exist before Claude can search it.
+- The current `web-app/` does not install this config automatically.
 
-## Desktop
+## Supported Files
 
-A Tauri desktop shell is scaffolded in [desktop/README.md](/Users/solomonmithra/Documents/Work/Relevect/desktop/README.md).
+- `.md`
+- `.txt`
+- `.pdf`
+
+## Project Structure
+
+- `api/` FastAPI app
+- `core/` indexing and search logic
+- `web-app/` local UI
+- `mcp_server/` MCP server for Claude-style clients
+- `tests/` test suite
+
+## Useful Commands
+
+Run tests:
+
+```bash
+.venv/bin/pytest -q
+```
+
+Run the MCP server:
+
+```bash
+.venv/bin/python mcp_server/server.py
+```
+
+## Notes
+
+- The default database is `./data/relevect.db`.
+- The UI talks to FastAPI at `http://127.0.0.1:8000`.
+- Embeddings use a local `sentence-transformers` model. If the model is not already available locally, indexing and search can fail.
+

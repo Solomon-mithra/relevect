@@ -1,0 +1,10 @@
+.DS_Store
+.git
+.gitignore
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+data/relevect.db
+web-app/node_modules
+web-app/dist

@@ -9,10 +9,21 @@ const state = {
   selectedFileIds: [],
   searchResults: [],
   confirmAction: null,
+  indexing: {
+    active: false,
+    total: 0,
+    completed: 0,
+    currentFileName: null,
+    currentJobId: null,
+    currentStage: null,
+    detail: null,
+    progressPercent: 0,
+  },
 };
 
 const byId = (id) => document.getElementById(id);
 const tauriInvoke = globalThis.window?.__TAURI__?.core?.invoke;
+const isNativeDesktop = typeof tauriInvoke === "function";
 
 function setHomeFeedback(message, tone = "neutral") {
   const element = byId("home-feedback");
@@ -98,6 +109,34 @@ function filesNeedingReview() {
   return visibleFiles().filter((file) => isReviewableFile(file));
 }
 
+function filesNeedingReviewForFolder(folderId) {
+  return state.files.filter(
+    (file) => file.folder_id === folderId && isReviewableFile(file),
+  );
+}
+
+function filesForReviewModal(folderId) {
+  return state.files.filter((file) => {
+    if (folderId && file.folder_id !== folderId) {
+      return false;
+    }
+    return isReviewableFile(file) || file.status === "duplicate";
+  });
+}
+
+function folderFileStats(folderId) {
+  const files = state.files.filter((file) => file.folder_id === folderId);
+  const reviewable = files.filter((file) => isReviewableFile(file)).length;
+  const indexed = files.filter((file) => file.status === "indexed").length;
+  const failed = files.filter((file) => file.status === "failed").length;
+  return {
+    total: files.length,
+    reviewable,
+    indexed,
+    failed,
+  };
+}
+
 function relativeTime(value) {
   if (!value) {
     return "Not available";
@@ -110,7 +149,7 @@ function relativeTime(value) {
 }
 
 function fileStatusTone(status) {
-  if (status === "failed") {
+  if (status === "failed" || status === "duplicate") {
     return "danger";
   }
   if (status === "pending" || status === "discovered") {
@@ -157,16 +196,68 @@ function deriveFolderPathFromSelection(input) {
 }
 
 async function openNativeFolderPicker() {
-  if (typeof tauriInvoke === "function") {
+  if (isNativeDesktop) {
     const path = await tauriInvoke("pick_folder");
     return typeof path === "string" && path.trim() ? path.trim() : null;
   }
+  return null;
+}
 
+async function openBrowserFolderPicker() {
   return new Promise((resolve) => {
     const input = byId("folder-picker");
-    input.onchange = () => resolve(deriveFolderPathFromSelection(input));
+    input.value = "";
+    input.onchange = () => {
+      const files = Array.from(input.files ?? []);
+      resolve(files);
+    };
     input.click();
   });
+}
+
+async function importBrowserFolder(files) {
+  if (!files.length) {
+    throw new Error("No folder was selected.");
+  }
+
+  const first = files[0];
+  const relative = first.webkitRelativePath || "";
+  const folderName = relative.split("/")[0] || "Imported Folder";
+  const supportedFiles = files.filter((file) => {
+    const relativePath = file.webkitRelativePath || file.name;
+    return [".pdf", ".md", ".txt"].some((ext) =>
+      relativePath.toLowerCase().endsWith(ext),
+    );
+  });
+
+  if (!supportedFiles.length) {
+    throw new Error("The selected folder does not contain supported files (.pdf, .md, .txt).");
+  }
+
+  const formData = new FormData();
+  formData.append("folder_name", folderName);
+  for (const file of supportedFiles) {
+    formData.append("files", file, file.name);
+    formData.append("relative_paths", file.webkitRelativePath || file.name);
+  }
+
+  const response = await fetch(`${API_BASE}/folders/import-browser`, {
+    method: "POST",
+    body: formData,
+  });
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const body = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
+
+  if (!response.ok) {
+    const detail =
+      typeof body === "string" ? body : JSON.stringify(body, null, 2);
+    throw new Error(detail);
+  }
+
+  return body;
 }
 
 function renderStatusCards(files) {
@@ -383,6 +474,9 @@ function closeIndexReviewModal() {
   if (!modal) {
     return;
   }
+  if (state.indexing.active) {
+    return;
+  }
   modal.hidden = true;
 }
 
@@ -402,11 +496,73 @@ function updateIndexReviewCount() {
   byId("index-review-count").textContent = `${count} file${count === 1 ? "" : "s"} selected`;
 }
 
+function waitForNextPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function renderIndexingProgress() {
+  const container = byId("index-progress");
+  const fill = byId("index-progress-fill");
+  const label = byId("index-progress-label");
+  const percent = byId("index-progress-percent");
+  const submit = byId("submit-index-review");
+  const cancel = byId("cancel-index-review");
+  const selectAll = byId("select-all-review");
+  const clearAll = byId("clear-all-review");
+  const closeButton = byId("close-index-review");
+
+  const active = state.indexing.active;
+  const total = state.indexing.total || 0;
+  const completed = state.indexing.completed || 0;
+  const currentFileProgress = Number(state.indexing.progressPercent || 0);
+  const ratio = total > 0
+    ? Math.min(
+        ((completed + (currentFileProgress / 100)) / total),
+        1,
+      )
+    : 0;
+  const percentage = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+
+  container.hidden = !active;
+  fill.style.width = `${percentage}%`;
+  fill.classList.toggle(
+    "is-indeterminate",
+    active && currentFileProgress > 0 && currentFileProgress < 100,
+  );
+  percent.textContent = `${percentage}%`;
+  label.textContent = active
+    ? `Indexing ${completed}/${total}${state.indexing.currentFileName ? ` • ${state.indexing.currentFileName}` : ""}${state.indexing.currentStage ? ` • ${state.indexing.currentStage}` : ""}`
+    : "Preparing indexing…";
+
+  submit.disabled = active;
+  cancel.disabled = active;
+  selectAll.disabled = active;
+  clearAll.disabled = active;
+  closeButton.disabled = active;
+}
+
+async function pollIndexJob(jobId) {
+  while (state.indexing.active && state.indexing.currentJobId === jobId) {
+    const job = await api(`/index/jobs/${jobId}`, { method: "GET" });
+    state.indexing.currentStage = job.current_stage ?? null;
+    state.indexing.detail = job.detail ?? null;
+    state.indexing.progressPercent = Number(job.progress_percent ?? 0);
+    renderIndexingProgress();
+    if (job.status === "completed" || job.status === "failed") {
+      return job;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  return null;
+}
+
 function renderIndexReviewModal() {
-  const files = filesNeedingReview();
+  const folder = selectedFolder();
+  const files = filesForReviewModal(folder?.id ?? null);
   const list = byId("index-review-list");
   const subtitle = byId("index-review-subtitle");
-  const folder = selectedFolder();
   subtitle.textContent = folder
     ? `Review the scanned files from ${folderName(folder)} before they enter your private index.`
     : "Review the scanned files before they enter your private index.";
@@ -414,28 +570,35 @@ function renderIndexReviewModal() {
   list.innerHTML = "";
   if (!files.length) {
     list.className = "modal-list empty-state";
-    list.textContent = "No files are waiting for indexing.";
+    list.textContent = "This source is already up to date. No files are waiting for indexing.";
     updateIndexReviewCount();
+    renderIndexingProgress();
     return;
   }
 
   list.className = "modal-list";
   for (const file of files) {
+    const isDuplicate = file.status === "duplicate";
     const row = document.createElement("label");
-    row.className = "modal-file-row";
+    row.className = `modal-file-row${isDuplicate ? " is-disabled" : ""}`;
     row.innerHTML = `
       <input type="checkbox" ${state.selectedFileIds.includes(file.id) ? "checked" : ""} />
       <div class="modal-file-copy">
         <span class="modal-file-name">${file.file_name}</span>
         <span class="modal-file-path">${file.path}</span>
+        ${isDuplicate ? `<span class="modal-file-note">${file.last_error ?? "Already indexed elsewhere"}</span>` : ""}
       </div>
       <div class="modal-file-meta">
         <span class="badge badge-${fileStatusTone(file.status)}">${file.status}</span>
-        <span class="file-detail">${file.parser_type ?? "unparsed"}</span>
+        <span class="file-detail">${isDuplicate ? "Not selectable" : (file.parser_type ?? "unparsed")}</span>
       </div>
     `;
     const checkbox = row.querySelector('input[type="checkbox"]');
     checkbox?.addEventListener("change", (event) => {
+      if (isDuplicate) {
+        event.preventDefault();
+        return;
+      }
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) {
         return;
@@ -447,9 +610,13 @@ function renderIndexReviewModal() {
       }
       updateIndexReviewCount();
     });
+    if (state.indexing.active || isDuplicate) {
+      checkbox.disabled = true;
+    }
     list.append(row);
   }
   updateIndexReviewCount();
+  renderIndexingProgress();
 }
 
 function openIndexReviewModal() {
@@ -717,11 +884,12 @@ async function scanSelectedFolder() {
   if (!state.selectedFolderId) {
     throw new Error("Choose a folder before scanning.");
   }
-  await api("/index/scan", {
+  const result = await api("/index/scan", {
     method: "POST",
     body: JSON.stringify({ folder_id: state.selectedFolderId }),
   });
   setHomeFeedback("Folder scanned. Review the files below.", "success");
+  return result;
 }
 
 async function runIndexing() {
@@ -739,14 +907,77 @@ async function runSelectedIndexing() {
     throw new Error("Select at least one discovered or pending file.");
   }
 
-  const result = await api("/index/files", {
-    method: "POST",
-    body: JSON.stringify({ file_ids: state.selectedFileIds }),
-  });
-  state.selectedFileIds = [];
-  closeIndexReviewModal();
-  setHomeFeedback(`Indexed ${result.processed} selected files.`, "success");
-  renderJson("jobs-output", result);
+  const selectedIds = [...state.selectedFileIds];
+  const selectedFiles = selectedIds
+    .map((id) => state.files.find((file) => file.id === id))
+    .filter(Boolean);
+
+  state.indexing = {
+    active: true,
+    total: selectedIds.length,
+    completed: 0,
+    currentFileName: selectedFiles[0]?.file_name ?? null,
+    currentJobId: null,
+    currentStage: "queued",
+    detail: null,
+    progressPercent: 0,
+  };
+  renderIndexReviewModal();
+  await waitForNextPaint();
+
+  const results = [];
+  try {
+    for (const [index, fileId] of selectedIds.entries()) {
+      const current = selectedFiles[index];
+      state.indexing.currentFileName = current?.file_name ?? null;
+      state.indexing.currentStage = "queued";
+      state.indexing.progressPercent = 0;
+      renderIndexingProgress();
+      await waitForNextPaint();
+      const started = await api("/index/file/start", {
+        method: "POST",
+        body: JSON.stringify({ file_id: fileId }),
+      });
+      state.indexing.currentJobId = started.job_id;
+      const job = await pollIndexJob(started.job_id);
+      if (!job || job.status !== "completed") {
+        throw new Error(
+          job?.error || `Indexing failed for ${current?.file_name ?? "file"}.`,
+        );
+      }
+      results.push({
+        job_id: started.job_id,
+        file_id: started.file_id,
+        path: started.path,
+        status: "indexed",
+      });
+      state.indexing.completed = index + 1;
+      state.indexing.currentJobId = null;
+      state.indexing.progressPercent = 0;
+      state.indexing.currentStage = "completed";
+      renderIndexingProgress();
+      await waitForNextPaint();
+    }
+
+    await Promise.all([
+      refreshFolders(),
+      refreshFiles(),
+      refreshStatus(),
+      refreshHealth(),
+    ]);
+    state.selectedFileIds = [];
+    closeIndexReviewModal();
+    setHomeFeedback(`Indexed ${results.length} selected files.`, "success");
+    renderJson("jobs-output", { processed: results.length, results });
+  } finally {
+    state.indexing.active = false;
+    state.indexing.currentFileName = null;
+    state.indexing.currentJobId = null;
+    state.indexing.currentStage = null;
+    state.indexing.detail = null;
+    state.indexing.progressPercent = 0;
+    renderIndexReviewModal();
+  }
 }
 
 async function resetLocalData() {
@@ -799,32 +1030,77 @@ async function withRefresh(action) {
 
 async function pickFolder() {
   try {
-    setHomeFeedback("Waiting for folder selection...", "neutral");
-    const path = await openNativeFolderPicker();
+    if (isNativeDesktop) {
+      setHomeFeedback("Waiting for folder selection...", "neutral");
+      const path = await openNativeFolderPicker();
+      if (!path) {
+        setHomeFeedback("Folder selection cancelled.", "neutral");
+        return;
+      }
+      byId("folder-path").value = path;
+      await registerFolder();
+      await Promise.all([refreshFolders(), refreshFiles(), refreshStatus(), refreshHealth()]);
+      const folder = state.folders.find((entry) => entry.path === path);
+      if (folder) {
+        state.selectedFolderId = folder.id;
+      }
+      const scanResult = await scanSelectedFolder();
+      await Promise.all([refreshFolders(), refreshFiles(), refreshStatus()]);
+      const reviewableFiles = folder
+        ? filesNeedingReviewForFolder(folder.id)
+        : filesNeedingReview();
+      const modalFiles = folder ? filesForReviewModal(folder.id) : filesForReviewModal(null);
+      state.selectedFileIds = reviewableFiles.map((file) => file.id);
+      const discovered = state.selectedFileIds.length;
+      const stats = folder ? folderFileStats(folder.id) : null;
+      setHomeFeedback(
+        discovered
+          ? `Folder scanned. ${discovered} files are ready for review and indexing.`
+          : stats && stats.indexed > 0
+            ? `Folder is already indexed. ${stats.indexed} file${stats.indexed === 1 ? "" : "s"} already in Relevect and no new indexing is needed.`
+            : scanResult?.discovered_files
+              ? "Folder scanned, but no files currently need indexing."
+              : "Folder scanned. No supported files were found that need indexing.",
+        "success",
+      );
+      if (modalFiles.length) {
+        openIndexReviewModal();
+      }
+      return;
+    }
 
-    if (!path) {
+    setHomeFeedback("Choose a folder to import into Relevect.", "neutral");
+    const files = await openBrowserFolderPicker();
+    if (!files.length) {
       setHomeFeedback("Folder selection cancelled.", "neutral");
       return;
     }
 
-    byId("folder-path").value = path;
-    await registerFolder();
+    const result = await importBrowserFolder(files);
+    const folder = result.folder;
+    byId("folder-path").value = folder.path;
     await Promise.all([refreshFolders(), refreshFiles(), refreshStatus(), refreshHealth()]);
-    const folder = state.folders.find((entry) => entry.path === path);
     if (folder) {
       state.selectedFolderId = folder.id;
     }
-    await scanSelectedFolder();
-    await Promise.all([refreshFolders(), refreshFiles(), refreshStatus()]);
-    state.selectedFileIds = filesNeedingReview().map((file) => file.id);
+    const reviewableFiles = folder
+      ? filesNeedingReviewForFolder(folder.id)
+      : filesNeedingReview();
+    const modalFiles = folder ? filesForReviewModal(folder.id) : filesForReviewModal(null);
+    state.selectedFileIds = reviewableFiles.map((file) => file.id);
     const discovered = state.selectedFileIds.length;
+    const stats = folder ? folderFileStats(folder.id) : null;
     setHomeFeedback(
       discovered
-        ? `Folder scanned. ${discovered} files are ready for review and indexing.`
-        : "Folder scanned. No new files need indexing right now.",
+        ? `Folder imported. ${discovered} files are ready for review and indexing.`
+        : result.duplicate_files
+          ? `Folder imported. ${result.duplicate_files} file${result.duplicate_files === 1 ? "" : "s"} already exist in Relevect and were marked duplicate.`
+        : stats && stats.indexed > 0
+          ? `This folder is already in Relevect. ${stats.indexed} file${stats.indexed === 1 ? "" : "s"} are already indexed and no re-indexing is needed.`
+          : "Folder imported. No files currently need indexing.",
       "success",
     );
-    if (discovered) {
+    if (modalFiles.length) {
       openIndexReviewModal();
     }
   } catch (error) {
@@ -885,3 +1161,12 @@ byId("confirm-submit").addEventListener("click", async () => {
 });
 
 await withRefresh(async () => {});
+
+if (!isNativeDesktop) {
+  byId("folder-path").readOnly = true;
+  byId("pick-folder").textContent = "Choose Folder";
+  setHomeFeedback(
+    "Browser mode imports a selected folder into Relevect-managed local storage before indexing.",
+    "neutral",
+  );
+}

@@ -10,8 +10,10 @@
     <!-- Premium Header -->
     <header class="app-header">
       <div class="header-left">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
         </svg>
         <span class="brand-name">Relevect</span>
         <span class="badge badge-neutral">Local Context Engine</span>
@@ -68,7 +70,7 @@
             <p>Choose a folder in Finder and Relevect will trust it locally. Nothing is uploaded anywhere.</p>
             <input id="folder-picker" type="file" webkitdirectory directory multiple hidden />
             <div class="path-row custom-input-group">
-              <input id="folder-path" type="text" placeholder="Chosen folder will appear here" readonly />
+              <input id="folder-path" type="text" placeholder="Enter an absolute folder path" />
               <button id="pick-folder" class="btn-primary">Upload Folder</button>
             </div>
             <p id="home-feedback" class="home-feedback home-feedback-intro">Choose a folder to start building your private index.</p>
@@ -230,6 +232,16 @@
           <div class="modal-action-group">
             <button id="select-all-review" class="ghost-link">Select All</button>
             <button id="clear-all-review" class="ghost-link">Clear</button>
+          </div>
+        </div>
+
+        <div id="index-progress" class="index-progress" hidden>
+          <div class="index-progress-head">
+            <span id="index-progress-label" class="index-progress-label">Preparing indexing…</span>
+            <span id="index-progress-percent" class="index-progress-percent">0%</span>
+          </div>
+          <div class="index-progress-track">
+            <div id="index-progress-fill" class="index-progress-fill"></div>
           </div>
         </div>
 

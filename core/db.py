@@ -83,6 +83,12 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     # Older Week 2 databases do not have the embedding column yet.
     if not _column_exists(conn, "chunks", "embedding"):
         conn.execute("ALTER TABLE chunks ADD COLUMN embedding TEXT")
+    if not _column_exists(conn, "index_jobs", "progress_percent"):
+        conn.execute("ALTER TABLE index_jobs ADD COLUMN progress_percent REAL NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "index_jobs", "current_stage"):
+        conn.execute("ALTER TABLE index_jobs ADD COLUMN current_stage TEXT")
+    if not _column_exists(conn, "index_jobs", "detail"):
+        conn.execute("ALTER TABLE index_jobs ADD COLUMN detail TEXT")
 
 
 @dataclass(frozen=True)
@@ -218,6 +224,27 @@ def get_file_by_id(file_id: str) -> Optional[FileRecord]:
 def get_file_by_path(path: str) -> Optional[FileRecord]:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM files WHERE path = ?", (path,)).fetchone()
+    return _row_to_file(row) if row else None
+
+
+def find_duplicate_by_content_hash(
+    content_hash: str,
+    *,
+    exclude_path: Optional[str] = None,
+) -> Optional[FileRecord]:
+    sql = """
+        SELECT *
+        FROM files
+        WHERE content_hash = ?
+          AND status != 'deleted'
+    """
+    params: list[object] = [content_hash]
+    if exclude_path is not None:
+        sql += " AND path != ?"
+        params.append(exclude_path)
+    sql += " ORDER BY created_at ASC LIMIT 1"
+    with get_conn() as conn:
+        row = conn.execute(sql, tuple(params)).fetchone()
     return _row_to_file(row) if row else None
 
 
@@ -422,6 +449,21 @@ def update_file_failure(file_id: str, error: str) -> None:
         )
 
 
+def mark_file_duplicate(file_id: str, duplicate_of_path: str) -> None:
+    ts = now_iso()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE files
+            SET status = 'duplicate',
+                last_error = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (f"Duplicate of indexed file: {duplicate_of_path}", ts, file_id),
+        )
+
+
 def mark_missing_files_deleted(folder_id: str, seen_paths: set[str]) -> int:
     ts = now_iso()
     with get_conn() as conn:
@@ -473,30 +515,65 @@ def count_files() -> dict[str, int]:
     }
 
 
-def create_index_job(job_type: str, status: str, file_id: Optional[str] = None) -> str:
+def create_index_job(
+    job_type: str,
+    status: str,
+    file_id: Optional[str] = None,
+    *,
+    progress_percent: float = 0.0,
+    current_stage: Optional[str] = None,
+    detail: Optional[str] = None,
+) -> str:
     job_id = str(uuid.uuid4())
     ts = now_iso()
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO index_jobs (id, file_id, job_type, status, started_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO index_jobs (
+                id, file_id, job_type, status, progress_percent, current_stage, detail,
+                started_at, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_id, file_id, job_type, status, ts, ts),
+            (job_id, file_id, job_type, status, progress_percent, current_stage, detail, ts, ts),
         )
     return job_id
 
 
-def finish_index_job(job_id: str, status: str, error: Optional[str] = None) -> None:
-    ts = now_iso()
+def update_index_job_progress(
+    job_id: str,
+    *,
+    progress_percent: float,
+    current_stage: str,
+    detail: Optional[str] = None,
+) -> None:
     with get_conn() as conn:
         conn.execute(
             """
             UPDATE index_jobs
-            SET status = ?, finished_at = ?, error = ?
+            SET progress_percent = ?, current_stage = ?, detail = ?
             WHERE id = ?
             """,
-            (status, ts, error, job_id),
+            (progress_percent, current_stage, detail, job_id),
+        )
+
+
+def finish_index_job(job_id: str, status: str, error: Optional[str] = None) -> None:
+    ts = now_iso()
+    progress_percent = 100.0 if status == "completed" else None
+    current_stage = "completed" if status == "completed" else "failed" if status == "failed" else status
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE index_jobs
+            SET status = ?,
+                finished_at = ?,
+                error = ?,
+                progress_percent = COALESCE(?, progress_percent),
+                current_stage = COALESCE(?, current_stage)
+            WHERE id = ?
+            """,
+            (status, ts, error, progress_percent, current_stage, job_id),
         )
 
 
@@ -504,7 +581,9 @@ def latest_jobs(limit: int = 10) -> list[dict[str, object]]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT id, file_id, job_type, status, started_at, finished_at, error
+            SELECT
+                id, file_id, job_type, status, progress_percent, current_stage, detail,
+                started_at, finished_at, error
             FROM index_jobs
             ORDER BY created_at DESC
             LIMIT ?
@@ -513,6 +592,21 @@ def latest_jobs(limit: int = 10) -> list[dict[str, object]]:
         ).fetchall()
 
     return [dict(r) for r in rows]
+
+
+def get_index_job(job_id: str) -> Optional[dict[str, object]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                id, file_id, job_type, status, progress_percent, current_stage, detail,
+                started_at, finished_at, error
+            FROM index_jobs
+            WHERE id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def list_files_needing_indexing(embedding_model: str) -> list[FileRecord]:

@@ -1,1 +1,0 @@
-{"main-capability":{"identifier":"main-capability","description":"Allows the main Relevect window to use core IPC and the native folder picker command.","local":true,"windows":["main"],"permissions":["core:default","core:app:default","allow-pick-folder"]}}

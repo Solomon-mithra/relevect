@@ -1,7 +1,11 @@
+import re
+import shutil
+import threading
+import hashlib
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -13,9 +17,12 @@ from core.db import (
     delete_file,
     delete_folder,
     finish_index_job,
+    find_duplicate_by_content_hash,
     get_file_by_id,
+    get_index_job,
     get_file_by_path,
     get_folder_by_path,
+    get_db_path,
     init_db,
     latest_jobs,
     list_files,
@@ -26,10 +33,13 @@ from core.db import (
     replace_chunks_for_file,
     reset_local_data,
     search_chunks,
+    mark_file_duplicate,
+    update_index_job_progress,
     update_file_after_index,
     update_file_failure,
 )
 from core.discovery import discover_files
+from core.discovery import SUPPORTED_EXTENSIONS
 from core.embeddings import embed_text, embed_texts, get_embedding_model_name
 from core.parser import parse_document
 
@@ -83,6 +93,18 @@ class SearchRequest(BaseModel):
     min_score: float | None = Field(None, description="Optional minimum cosine score")
 
 
+def _browser_import_root() -> Path:
+    db_parent = Path(get_db_path()).expanduser().resolve().parent
+    root = db_parent / "browser-imports"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _safe_folder_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")
+    return cleaned or "imported-folder"
+
+
 def _index_file_record(record_id: str) -> dict[str, Any]:
     record = get_file_by_id(record_id)
     if record is None:
@@ -90,16 +112,62 @@ def _index_file_record(record_id: str) -> dict[str, Any]:
     if record.status == "deleted":
         raise HTTPException(status_code=400, detail="Cannot index a deleted file")
 
-    job_id = create_index_job(job_type="index_file", status="running", file_id=record.id)
+    job_id = create_index_job(
+        job_type="index_file",
+        status="running",
+        file_id=record.id,
+        progress_percent=0.0,
+        current_stage="queued",
+        detail=record.file_name,
+    )
+
+    return _run_index_file_job(record, job_id)
+
+
+def _run_index_file_job(record, job_id: str) -> dict[str, Any]:
+    update_index_job_progress(
+        job_id,
+        progress_percent=5.0,
+        current_stage="parsing",
+        detail=record.file_name,
+    )
 
     try:
         document = parse_document(record.path)
+        update_index_job_progress(
+            job_id,
+            progress_percent=25.0,
+            current_stage="chunking",
+            detail=record.file_name,
+        )
         chunks = chunk_document(document)
-        embeddings = embed_texts([str(chunk["text"]) for chunk in chunks])
         model_name = get_embedding_model_name()
+        embeddings: list[list[float]] = []
+        chunk_texts = [str(chunk["text"]) for chunk in chunks]
+        batch_size = 24
+        total_batches = max(1, (len(chunk_texts) + batch_size - 1) // batch_size)
+        for batch_index in range(total_batches):
+            start = batch_index * batch_size
+            end = start + batch_size
+            batch_texts = chunk_texts[start:end]
+            if batch_texts:
+                embeddings.extend(embed_texts(batch_texts))
+            progress = 40.0 + (((batch_index + 1) / total_batches) * 40.0)
+            update_index_job_progress(
+                job_id,
+                progress_percent=progress,
+                current_stage="embedding",
+                detail=f"{record.file_name} • batch {batch_index + 1}/{total_batches}",
+            )
         for chunk, embedding in zip(chunks, embeddings):
             chunk["embedding"] = embedding
             chunk["embedding_model"] = model_name
+        update_index_job_progress(
+            job_id,
+            progress_percent=88.0,
+            current_stage="storing",
+            detail=f"{record.file_name} • {len(chunks)} chunks",
+        )
         stored_chunks = replace_chunks_for_file(record.id, chunks)
         update_file_after_index(
             file_id=record.id,
@@ -121,6 +189,21 @@ def _index_file_record(record_id: str) -> dict[str, Any]:
         update_file_failure(record.id, str(exc))
         finish_index_job(job_id, status="failed", error=str(exc))
         raise HTTPException(status_code=500, detail=f"Indexing failed: {exc}")
+
+
+def _index_file_job_worker(record_id: str, job_id: str) -> None:
+    record = get_file_by_id(record_id)
+    if record is None:
+        finish_index_job(job_id, status="failed", error="File not found in metadata store")
+        return
+    if record.status == "deleted":
+        finish_index_job(job_id, status="failed", error="Cannot index a deleted file")
+        return
+
+    try:
+        _run_index_file_job(record, job_id)
+    except HTTPException:
+        return
 
 
 @app.get("/health")
@@ -146,6 +229,90 @@ def add_folder(req: FolderCreateRequest) -> dict[str, Any]:
         "path": created.path,
         "is_active": created.is_active,
         "created_at": created.created_at,
+    }
+
+
+@app.post("/folders/import-browser")
+async def import_browser_folder(
+    files: list[UploadFile] = File(...),
+    relative_paths: list[str] = Form(...),
+    folder_name: str = Form(...),
+) -> dict[str, Any]:
+    if not files:
+        raise HTTPException(status_code=400, detail="No files were uploaded")
+    if len(files) != len(relative_paths):
+        raise HTTPException(status_code=400, detail="Uploaded files and relative paths do not match")
+
+    import_root = _browser_import_root()
+    import_dir = import_root / f"{_safe_folder_name(folder_name)}"
+    if import_dir.exists():
+        shutil.rmtree(import_dir)
+    import_dir.mkdir(parents=True, exist_ok=True)
+
+    normalized = str(import_dir.resolve())
+    folder = get_folder_by_path(normalized)
+    if folder is None:
+        folder = create_folder(normalized)
+
+    written_files = 0
+    duplicate_files = 0
+    seen_hashes: dict[str, str] = {}
+    for upload, relative_path in zip(files, relative_paths):
+        relative = Path(relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise HTTPException(status_code=400, detail="Invalid uploaded relative path")
+        if relative.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+
+        destination = import_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        content = await upload.read()
+        destination.write_bytes(content)
+        content_hash = hashlib.sha256(content).hexdigest()
+        duplicate_path = seen_hashes.get(content_hash)
+        duplicate = None
+        if duplicate_path is None:
+            duplicate = find_duplicate_by_content_hash(
+                content_hash,
+                exclude_path=str(destination.resolve()),
+            )
+            duplicate_path = duplicate.path if duplicate is not None else None
+        written_files += 1
+
+        sync_result = sync_discovered_file(
+            folder_id=folder.id,
+            path=str(destination.resolve()),
+            file_name=destination.name,
+            extension=destination.suffix.lower(),
+            size_bytes=destination.stat().st_size,
+            mtime=destination.stat().st_mtime,
+            status="discovered",
+        )
+        if duplicate_path is not None:
+            mark_file_duplicate(sync_result.file_id, duplicate_path)
+            duplicate_files += 1
+        else:
+            seen_hashes[content_hash] = str(destination.resolve())
+
+    if written_files == 0:
+        raise HTTPException(status_code=400, detail="No supported files were found in the selected folder")
+
+    discovered = discover_files(folder.path)
+    seen_paths: set[str] = {item.path for item in discovered}
+
+    marked_deleted = mark_missing_files_deleted(folder.id, seen_paths)
+
+    return {
+        "folder": {
+            "id": folder.id,
+            "path": folder.path,
+            "is_active": folder.is_active,
+            "created_at": folder.created_at,
+        },
+        "imported_files": written_files,
+        "discovered_files": len(discovered),
+        "duplicate_files": duplicate_files,
+        "marked_deleted_files": marked_deleted,
     }
 
 
@@ -231,6 +398,49 @@ def index_file(req: IndexFileRequest) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="File not found in metadata store")
     return _index_file_record(record.id)
+
+
+@app.post("/index/file/start")
+def start_index_file(req: IndexFileRequest) -> dict[str, Any]:
+    if not req.file_id and not req.path:
+        raise HTTPException(status_code=400, detail="Provide either file_id or path")
+
+    record = get_file_by_id(req.file_id) if req.file_id else None
+    if record is None and req.path:
+        record = get_file_by_path(str(Path(req.path).expanduser().resolve()))
+    if record is None:
+        raise HTTPException(status_code=404, detail="File not found in metadata store")
+    if record.status == "deleted":
+        raise HTTPException(status_code=400, detail="Cannot index a deleted file")
+
+    job_id = create_index_job(
+        job_type="index_file",
+        status="running",
+        file_id=record.id,
+        progress_percent=0.0,
+        current_stage="queued",
+        detail=record.file_name,
+    )
+    worker = threading.Thread(
+        target=_index_file_job_worker,
+        args=(record.id, job_id),
+        daemon=True,
+    )
+    worker.start()
+    return {
+        "job_id": job_id,
+        "file_id": record.id,
+        "path": record.path,
+        "status": "running",
+    }
+
+
+@app.get("/index/jobs/{job_id}")
+def get_job(job_id: str) -> dict[str, Any]:
+    job = get_index_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @app.post("/index/run")

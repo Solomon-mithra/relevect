@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 :root {
   /* Premium Dark Palette */
@@ -23,8 +23,8 @@
   --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.4);
   
   --mono: 'SF Mono', Consolas, Menlo, monospace;
-  --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --serif: 'Instrument Serif', "Canela", "Iowan Old Style", serif;
+  --sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --serif: 'Space Grotesk', "Canela", "Iowan Old Style", sans-serif;
   
   --radius-sm: 6px;
   --radius-md: 12px;
@@ -926,6 +926,73 @@ button, input, pre, code { font-family: inherit; outline: none; border: none; }
   gap: 14px;
 }
 
+.index-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.index-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.index-progress-label {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.index-progress-percent {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.index-progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.index-progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  transition: width 0.25s ease;
+}
+
+.index-progress-fill.is-indeterminate {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.16) 0%,
+      rgba(255, 255, 255, 0.04) 18%,
+      transparent 36%
+    ),
+    linear-gradient(90deg, var(--accent), var(--accent-hover));
+  background-size: 180px 100%, 100% 100%;
+  animation: index-progress-sweep 1.1s linear infinite;
+}
+
+@keyframes index-progress-sweep {
+  from {
+    background-position: -180px 0, 0 0;
+  }
+
+  to {
+    background-position: 180px 0, 0 0;
+  }
+}
+
 .modal-list {
   flex: 1;
   min-height: 280px;
@@ -957,10 +1024,30 @@ button, input, pre, code { font-family: inherit; outline: none; border: none; }
   border-color: rgba(255, 255, 255, 0.06);
 }
 
+.modal-file-row.is-disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.015);
+  border-color: rgba(217, 102, 87, 0.12);
+}
+
+.modal-file-row.is-disabled:hover {
+  background: rgba(255, 255, 255, 0.015);
+  border-color: rgba(217, 102, 87, 0.12);
+}
+
+.modal-file-row.is-disabled .modal-file-name {
+  color: rgba(214, 152, 71, 0.72);
+}
+
 .modal-file-row input {
   width: 15px;
   height: 15px;
   accent-color: var(--accent);
+}
+
+.modal-file-row.is-disabled input {
+  cursor: not-allowed;
 }
 
 .modal-file-copy {
@@ -985,10 +1072,22 @@ button, input, pre, code { font-family: inherit; outline: none; border: none; }
   text-overflow: ellipsis;
 }
 
+.modal-file-note {
+  color: rgba(217, 102, 87, 0.78);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .modal-file-meta {
+  min-width: 112px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 6px;
+  text-align: right;
 }
 
 .modal-footer {
@@ -1014,6 +1113,15 @@ button, input, pre, code { font-family: inherit; outline: none; border: none; }
 .modal-footer .btn-secondary:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: var(--line-strong);
+}
+
+.modal-footer .btn-secondary:disabled,
+.modal-footer .btn-primary:disabled,
+.ghost-link:disabled,
+.modal-close:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .modal-footer .btn-primary {

@@ -1,0 +1,24 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      RELEVECT_DB_PATH: /app/data/relevect.db
+      HF_HOME: /app/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /app/.cache/sentence-transformers
+      TRANSFORMERS_CACHE: /app/.cache/huggingface/transformers
+      RELEVECT_EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+
+  web:
+    build:
+      context: .
+      dockerfile: web-app/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "1420:1420"
